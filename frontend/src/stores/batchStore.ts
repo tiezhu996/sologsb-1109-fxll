@@ -1,7 +1,9 @@
 import { create } from 'zustand';
 import { db } from '../utils/db';
 import { uid } from '../utils/id';
-import type { FireLevel } from '../types/processing-method';
+import { methodSnapshotById } from './methodStore';
+import { placeholderSnapshot } from '../utils/version';
+import type { FireLevel, ProcessingMethod } from '../types/processing-method';
 import type { ProcessBatch, ProcessDegree } from '../types/process-batch';
 
 export interface BatchInput {
@@ -17,6 +19,8 @@ export interface BatchInput {
   degree: ProcessDegree;
   operator: string;
   remark?: string;
+  /** 方法变更时随表单传入的新快照；不传则保留批次原有快照（质检改判不覆盖） */
+  methodSnapshot?: ProcessingMethod;
 }
 
 interface BatchState {
@@ -45,11 +49,14 @@ export const useBatchStore = create<BatchState>()((set, get) => ({
   },
 
   createBatch: async (input, lock = false) => {
+    // 建批即冻结当时方法版本快照：方法后续调整只生成新版本，不影响本批判定依据
+    const snapshot = (await methodSnapshotById(input.methodId)) ?? placeholderSnapshot(input.methodId, input.fireLevel);
     const batch: ProcessBatch = {
       id: uid('batch'),
       batchNo: input.batchNo.trim(),
       herbId: input.herbId,
       methodId: input.methodId,
+      methodSnapshot: snapshot,
       feedKg: Number(input.feedKg) || 0,
       auxUsedKg: Number(input.auxUsedKg) || 0,
       fireLevel: input.fireLevel,
@@ -75,7 +82,17 @@ export const useBatchStore = create<BatchState>()((set, get) => ({
     if (current.locked && !force) {
       return false;
     }
-    const next: ProcessBatch = { ...current, ...patch };
+    // 快照只随方法变更而更新；质检改判（force）不得覆盖历史判定依据
+    const nextMethodId = patch.methodId;
+    const methodChanged = nextMethodId !== undefined && nextMethodId !== current.methodId;
+    const methodSnapshot = methodChanged
+      ? patch.methodSnapshot ?? (nextMethodId ? await methodSnapshotById(nextMethodId) : undefined) ?? current.methodSnapshot
+      : current.methodSnapshot;
+    const next: ProcessBatch = {
+      ...current,
+      ...patch,
+      methodSnapshot,
+    };
     if (force) {
       next.qcBy = next.qcBy ?? '质检员 · 赵敏';
     }

@@ -30,7 +30,8 @@ export default function ProcessTimeline({ batches, herbs, methods, limit = 6 }: 
     <Timeline
       items={rows.map((batch) => {
         const herb = herbs.find((h) => h.id === batch.herbId);
-        const method = methods.find((m) => m.id === batch.methodId);
+        const method = batch.methodSnapshot ?? methods.find((m) => m.id === batch.methodId);
+        const methodText = method ? `${method.name} ${method.versionLabel}` : '未知方法';
         return {
           color: batch.degree === '适中' ? 'green' : batch.degree === '太过' ? 'red' : 'orange',
           children: (
@@ -41,7 +42,7 @@ export default function ProcessTimeline({ batches, herbs, methods, limit = 6 }: 
               </Tag>
               {batch.locked ? <Tag color="blue">已锁定</Tag> : <Tag>待判定</Tag>}
               <div style={{ fontSize: 12, color: '#6b7a70' }}>
-                {herb?.name ?? '未知药材'} · {method?.name ?? '未知方法'} · {batch.fireLevel} ·{' '}
+                {herb?.name ?? '未知药材'} · {methodText} · {batch.fireLevel} ·{' '}
                 {formatDate(batch.startedAt)} · 得率 {batch.yieldRate}% · 操作人 {batch.operator}
               </div>
             </div>

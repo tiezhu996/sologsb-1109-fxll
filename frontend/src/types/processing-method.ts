@@ -20,9 +20,21 @@ export type Auxiliary = '无' | '黄酒' | '米醋' | '食盐' | '蜂蜜' | '麦
 /** 判断标准维度 */
 export type CriterionDimension = '色泽' | '气味' | '断面';
 
-/** 炮制方法（辅料比例 / 火候 / 判断标准） */
+/** 炮制方法（辅料比例 / 火候 / 判断标准），按版本链管理 */
 export interface ProcessingMethod {
   id: string;
+  /** 版本链根 id：同一起始方法的所有版本 rootId 相同 */
+  rootId: string;
+  /** 版本号，从 1 递增 */
+  versionNo: number;
+  /** 版本标识，如 v1.0 / v2.0 */
+  versionLabel: string;
+  /** 上一版本 id（版本链），初始版本为空 */
+  prevVersionId?: string;
+  /** 本版本生效时间 ISO */
+  effectiveAt: string;
+  /** 版本说明（调整原因，如「夏季辅料比例调整」） */
+  versionNote?: string;
   /** 方法名 */
   name: MethodName;
   /** 辅料 */
@@ -41,7 +53,7 @@ export interface ProcessingMethod {
   criterionDimension: CriterionDimension;
   /** 适用药材说明 */
   applicable: string;
-  /** 是否为派生方法（由某个基础方法复制派生而来） */
+  /** 派生来源（具体版本 id）：由某个基础方法版本复制派生而来 */
   derivedFrom?: string;
 }
 

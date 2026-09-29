@@ -1,4 +1,4 @@
-import type { FireLevel } from './processing-method';
+import type { FireLevel, ProcessingMethod } from './processing-method';
 
 /** 炮制程度 */
 export type ProcessDegree = '不及' | '适中' | '太过';
@@ -10,8 +10,10 @@ export interface ProcessBatch {
   batchNo: string;
   /** 关联药材 */
   herbId: string;
-  /** 采用方法 */
+  /** 采用方法（具体版本 id） */
   methodId: string;
+  /** 建批时冻结的方法版本快照（判定依据，不随方法后续修改而改变） */
+  methodSnapshot: ProcessingMethod;
   /** 投料量（kg） */
   feedKg: number;
   /** 辅料实际用量（kg） */

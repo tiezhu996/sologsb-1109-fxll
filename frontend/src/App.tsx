@@ -10,6 +10,7 @@ import {
 } from '@ant-design/icons';
 import { Link, Outlet, useLocation } from 'react-router-dom';
 import { seedIfEmpty } from './utils/seed';
+import { ensureVersionedData } from './utils/version';
 import { useHerbStore } from './stores/herbStore';
 import { useMethodStore } from './stores/methodStore';
 import { useBatchStore } from './stores/batchStore';
@@ -42,6 +43,8 @@ export default function App() {
     (async () => {
       try {
         await seedIfEmpty();
+        // 兜底：旧版备份导入等场景下补齐方法版本字段与批次快照（幂等）
+        await ensureVersionedData();
         await Promise.all([hydrateHerbs(), hydrateMethods(), hydrateBatches(), hydrateSamples()]);
       } catch (error) {
         message.error(`本地数据装载失败：${(error as Error).message}`);

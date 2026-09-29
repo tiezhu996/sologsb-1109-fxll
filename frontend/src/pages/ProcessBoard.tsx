@@ -40,11 +40,13 @@ export default function ProcessBoard() {
 
   const herbName = (id: string) => herbs.find((h) => h.id === id)?.name ?? '未知药材';
   const methodName = (id: string) => methods.find((m) => m.id === id)?.name ?? '未知方法';
+  const batchMethodLabel = (batch: ProcessBatch) =>
+    batch.methodSnapshot ? `${batch.methodSnapshot.name} ${batch.methodSnapshot.versionLabel}` : methodName(batch.methodId);
 
   const pendingColumns: TableColumnsType<ProcessBatch> = [
     { title: '生产批号', dataIndex: 'batchNo', width: 130, render: (v: string) => <Text strong>{v}</Text> },
     { title: '药材', dataIndex: 'herbId', width: 100, render: (id: string) => herbName(id) },
-    { title: '炮制方法', dataIndex: 'methodId', width: 100, render: (id: string) => methodName(id) },
+    { title: '炮制方法', dataIndex: 'methodId', width: 120, render: (_id: string, record) => batchMethodLabel(record) },
     { title: '投料量(kg)', dataIndex: 'feedKg', width: 100, align: 'right' },
     { title: '辅料用量(kg)', dataIndex: 'auxUsedKg', width: 110, align: 'right' },
     {

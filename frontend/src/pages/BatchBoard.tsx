@@ -12,9 +12,11 @@ import { useHerbStore } from '../stores/herbStore';
 import { useMethodStore } from '../stores/methodStore';
 import { useBatchStore } from '../stores/batchStore';
 import { HERB_ORIGINS, HERB_PARTS } from '../types/herb-material';
-import { FIRE_LEVELS, type FireLevel } from '../types/processing-method';
+import { FIRE_LEVELS, type FireLevel, type ProcessingMethod } from '../types/processing-method';
 import { PROCESS_DEGREES, type ProcessBatch, type ProcessDegree } from '../types/process-batch';
 import { DEGREE_RULES, judgeDegree, suggestedValues } from '../utils/degree';
+import { formatDate } from '../utils/degree';
+import { methodLabel, snapshotOf } from '../utils/version';
 
 const { Title, Paragraph, Text } = Typography;
 
@@ -42,6 +44,7 @@ export default function BatchBoard() {
   const { message } = AntApp.useApp();
   const herbs = useHerbStore((s) => s.herbs);
   const methods = useMethodStore((s) => s.methods);
+  const latestMethods = useMethodStore((s) => s.latestMethods);
   const batches = useBatchStore((s) => s.batches);
   const createBatch = useBatchStore((s) => s.createBatch);
   const updateBatch = useBatchStore((s) => s.updateBatch);
@@ -61,6 +64,9 @@ export default function BatchBoard() {
 
   const watched = Form.useWatch([], form) as Partial<BatchFormValues> | undefined;
   const watchedMethod = methods.find((m) => m.id === (watched?.methodId ?? ''));
+  // 方法下拉只列每个版本链的最新版本；已锁定批次（含质检改判）以建批时冻结的方法快照为判定依据
+  const methodOptions = useMemo(() => latestMethods(), [latestMethods, methods]);
+  const standardMethod = editing?.locked ? editing.methodSnapshot : watchedMethod;
   const watchedYieldRate = useMemo(() => {
     const feed = Number(watched?.feedKg) || 0;
     const out = Number(watched?.outputKg) || 0;
@@ -69,15 +75,15 @@ export default function BatchBoard() {
   }, [watched?.feedKg, watched?.outputKg]);
 
   const verdict = useMemo(() => {
-    if (!watchedMethod) return undefined;
+    if (!standardMethod) return undefined;
     return judgeDegree({
-      method: watchedMethod,
-      fireLevel: (watched?.fireLevel ?? watchedMethod.fireLevel) as FireLevel,
-      duration: Number(watched?.duration) || watchedMethod.duration,
-      temp: Number(watched?.temp) || Math.round((watchedMethod.tempRange[0] + watchedMethod.tempRange[1]) / 2),
+      method: standardMethod,
+      fireLevel: (watched?.fireLevel ?? standardMethod.fireLevel) as FireLevel,
+      duration: Number(watched?.duration) || standardMethod.duration,
+      temp: Number(watched?.temp) || Math.round((standardMethod.tempRange[0] + standardMethod.tempRange[1]) / 2),
       yieldRate: watchedYieldRate,
     });
-  }, [watchedMethod, watched?.fireLevel, watched?.duration, watched?.temp, watchedYieldRate]);
+  }, [standardMethod, watched?.fireLevel, watched?.duration, watched?.temp, watchedYieldRate]);
 
   const visibleHerbs = useMemo(() => herbFilter.apply(herbs), [herbs, herbFilter]);
   const visibleBatches = useMemo(() => {
@@ -97,7 +103,7 @@ export default function BatchBoard() {
     setQcMode(false);
     form.resetFields();
     const firstHerb = herbs[0];
-    const firstMethod = methods[0];
+    const firstMethod = methodOptions[0];
     const now = dayjs();
     const base: Partial<BatchFormValues> = {
       batchNo: `PZ-${dayjs().format('YYMMDD')}-${String(batches.length + 1).padStart(2, '0')}`,
@@ -122,7 +128,8 @@ export default function BatchBoard() {
     setEditing(record);
     setQcMode(false);
     form.resetFields();
-    const suggested = methodOf(record.methodId);
+    // 已锁定批次按冻结快照回显标准；未锁定批次按所选方法当前版本回显
+    const standard = record.locked ? record.methodSnapshot : methodOf(record.methodId);
     form.setFieldsValue({
       batchNo: record.batchNo,
       herbId: record.herbId,
@@ -131,8 +138,8 @@ export default function BatchBoard() {
       auxUsedKg: record.auxUsedKg,
       outputKg: Number(((record.feedKg * record.yieldRate) / 100).toFixed(1)),
       fireLevel: record.fireLevel,
-      temp: suggested ? Math.round((suggested.tempRange[0] + suggested.tempRange[1]) / 2) : 100,
-      duration: suggested?.duration ?? 12,
+      temp: standard ? Math.round((standard.tempRange[0] + standard.tempRange[1]) / 2) : 100,
+      duration: standard?.duration ?? 12,
       startedAt: dayjs(record.startedAt),
       endedAt: dayjs(record.endedAt),
       operator: record.operator,
@@ -151,6 +158,14 @@ export default function BatchBoard() {
       return;
     }
     const yieldRate = Number(((outputKg / feedKg) * 100).toFixed(1));
+    // 未锁定批次更换方法时同步刷新快照；锁定（质检改判）批次快照冻结不变
+    let methodSnapshot: ProcessingMethod | undefined;
+    if (editing && !editing.locked && values.methodId !== editing.methodId) {
+      const nextMethod = methods.find((m) => m.id === values.methodId);
+      if (nextMethod) {
+        methodSnapshot = snapshotOf(nextMethod);
+      }
+    }
     const payload = {
       batchNo: values.batchNo,
       herbId: values.herbId,
@@ -164,6 +179,7 @@ export default function BatchBoard() {
       degree: values.degree,
       operator: values.operator,
       remark: values.remark,
+      methodSnapshot,
     };
     if (editing) {
       const ok = await updateBatch(editing.id, payload, qcMode);
@@ -185,12 +201,33 @@ export default function BatchBoard() {
   const columns: TableColumnsType<ProcessBatch> = [
     { title: '生产批号', dataIndex: 'batchNo', width: 130, render: (v: string) => <Text strong>{v}</Text> },
     { title: '药材', dataIndex: 'herbId', width: 90, render: (id: string) => herbName(id) },
-    { title: '方法', dataIndex: 'methodId', width: 90, render: (id: string) => methodOf(id)?.name ?? '-' },
+    {
+      title: '方法（批次版本）',
+      dataIndex: 'methodId',
+      width: 150,
+      render: (_id: string, record) => {
+        const snap = record.methodSnapshot;
+        return snap ? (
+          <Space size={4}>
+            {methodLabel(snap)}
+            {snap.versionNote ? <Tag color="blue">快照</Tag> : null}
+          </Space>
+        ) : (
+          methodOf(record.methodId)?.name ?? '-'
+        );
+      },
+    },
     {
       title: '火候',
       dataIndex: 'fireLevel',
-      width: 180,
-      render: (v: FireLevel, record) => <FireLevelTag level={v} tempRange={methodOf(record.methodId)?.tempRange} duration={methodOf(record.methodId)?.duration} />,
+      width: 190,
+      render: (v: FireLevel, record) => (
+        <FireLevelTag
+          level={v}
+          tempRange={record.methodSnapshot?.tempRange}
+          duration={record.methodSnapshot?.duration}
+        />
+      ),
     },
     { title: '投料(kg)', dataIndex: 'feedKg', width: 90, align: 'right' },
     { title: '辅料(kg)', dataIndex: 'auxUsedKg', width: 90, align: 'right' },
@@ -347,31 +384,42 @@ export default function BatchBoard() {
             </Form.Item>
             <Form.Item name="methodId" label="炮制方法" rules={[{ required: true, message: '请选择炮制方法' }]} style={{ flex: 1 }}>
               <Select
-                disabled={Boolean(editing?.locked) && !qcMode}
-                options={methods.map((m) => ({ label: `${m.name} · ${m.auxiliary} ${m.auxRatio}kg/100kg`, value: m.id }))}
+                disabled={Boolean(editing?.locked)}
+                options={methodOptions.map((m) => ({ label: `${methodLabel(m)} · ${m.auxiliary} ${m.auxRatio}kg/100kg`, value: m.id }))}
               />
             </Form.Item>
           </Space>
 
-          {watchedMethod ? (
+          {editing?.locked ? (
+            <Alert
+              type="info"
+              showIcon
+              style={{ marginBottom: 12 }}
+              message={`判定依据：${methodLabel(editing.methodSnapshot)}（${formatDate(editing.methodSnapshot.effectiveAt)} 起执行，建批时冻结的方法版本）`}
+              description={editing.methodSnapshot.versionNote ? `版本说明：${editing.methodSnapshot.versionNote}` : '该批次按当时方法版本判定，方法后续调整不影响本批标准；质检改判仍按此版本复核。'}
+            />
+          ) : null}
+
+          {standardMethod ? (
             <Alert
               type="success"
               showIcon
               style={{ marginBottom: 12 }}
               message={
                 <Space wrap size={8}>
-                  <span>辅料比例 {watchedMethod.auxRatio}kg/100kg</span>
-                  <FireLevelTag level={watchedMethod.fireLevel} tempRange={watchedMethod.tempRange} duration={watchedMethod.duration} />
-                  <Tag>{watchedMethod.criterionDimension}</Tag>
+                  <span>辅料比例 {standardMethod.auxRatio}kg/100kg</span>
+                  <FireLevelTag level={standardMethod.fireLevel} tempRange={standardMethod.tempRange} duration={standardMethod.duration} />
+                  <Tag>{standardMethod.criterionDimension}</Tag>
+                  <Tag color="blue">{standardMethod.versionLabel}</Tag>
                 </Space>
               }
-              description={`判断标准：${watchedMethod.criterion}；适用药材：${watchedMethod.applicable}`}
+              description={`判断标准：${standardMethod.criterion}；适用药材：${standardMethod.applicable}`}
             />
           ) : null}
 
           <RatioCalculator
-            auxRatio={watchedMethod?.auxRatio ?? 0}
-            auxiliary={watchedMethod?.auxiliary ?? '无'}
+            auxRatio={standardMethod?.auxRatio ?? 0}
+            auxiliary={standardMethod?.auxiliary ?? '无'}
             feedKg={Number(watched?.feedKg) || 0}
             auxUsedKg={Number(watched?.auxUsedKg) || 0}
             outputKg={Number(watched?.outputKg) || 0}
