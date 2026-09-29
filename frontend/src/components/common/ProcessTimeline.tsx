@@ -1,8 +1,10 @@
 import { Empty, Tag, Timeline, Typography } from 'antd';
 import type { HerbMaterial } from '../../types/herb-material';
 import type { ProcessingMethod } from '../../types/processing-method';
+import { methodFullLabel } from '../../types/processing-method';
 import type { ProcessBatch, ProcessDegree } from '../../types/process-batch';
 import { formatDate } from '../../utils/degree';
+import { pickBatchMethod } from '../../utils/method-version';
 
 const { Text } = Typography;
 
@@ -30,7 +32,7 @@ export default function ProcessTimeline({ batches, herbs, methods, limit = 6 }: 
     <Timeline
       items={rows.map((batch) => {
         const herb = herbs.find((h) => h.id === batch.herbId);
-        const method = methods.find((m) => m.id === batch.methodId);
+        const method = pickBatchMethod(batch, methods)?.ref;
         return {
           color: batch.degree === '适中' ? 'green' : batch.degree === '太过' ? 'red' : 'orange',
           children: (
@@ -41,7 +43,7 @@ export default function ProcessTimeline({ batches, herbs, methods, limit = 6 }: 
               </Tag>
               {batch.locked ? <Tag color="blue">已锁定</Tag> : <Tag>待判定</Tag>}
               <div style={{ fontSize: 12, color: '#6b7a70' }}>
-                {herb?.name ?? '未知药材'} · {method?.name ?? '未知方法'} · {batch.fireLevel} ·{' '}
+                {herb?.name ?? '未知药材'} · {method ? methodFullLabel(method) : '方法已删除'} · {batch.fireLevel} ·{' '}
                 {formatDate(batch.startedAt)} · 得率 {batch.yieldRate}% · 操作人 {batch.operator}
               </div>
             </div>

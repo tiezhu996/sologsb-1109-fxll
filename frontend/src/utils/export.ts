@@ -1,4 +1,4 @@
-import { db, SCHEMA_VERSION } from './db';
+import { db, SCHEMA_VERSION, normalizeMethodVersions } from './db';
 
 export interface BackupPayload {
   app: string;
@@ -78,5 +78,7 @@ export async function importBackup(text: string): Promise<{ herbs: number; metho
     if (payload.batches?.length) await db.batches.bulkPut(payload.batches as never[]);
     if (payload.samples?.length) await db.samples.bulkPut(payload.samples as never[]);
   });
+  // 恢复 v3 之前的备份时补初始版本与初始快照，旧判定数据不改判、不丢失
+  await normalizeMethodVersions();
   return counts;
 }

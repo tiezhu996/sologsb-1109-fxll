@@ -2,6 +2,13 @@ import type { FireLevel, MethodName, ProcessingMethod } from '../types/processin
 import type { DegreeRule, ProcessDegree } from '../types/process-batch';
 import type { RetainSample, SampleExpiry, SampleExpiryState } from '../types/retain-sample';
 
+/** 判定所需的方法标准子集（方法版本与批次快照均满足） */
+export interface MethodStandard {
+  name: MethodName;
+  tempRange: [number, number];
+  duration: number;
+}
+
 /** 火力对应的常见温度区间提示（℃） */
 export const FIRE_LEVEL_TEMP: Record<FireLevel, [number, number]> = {
   文火: [90, 130],
@@ -23,7 +30,7 @@ export const EXPECTED_YIELD: Record<MethodName, number> = {
   煅: 82,
 };
 
-export function expectedYieldOf(method: ProcessingMethod): number {
+export function expectedYieldOf(method: MethodStandard): number {
   return EXPECTED_YIELD[method.name];
 }
 
@@ -39,7 +46,7 @@ export const DEGREE_RULES: DegreeRule[] = [
 ];
 
 export interface DegreeInput {
-  method: ProcessingMethod;
+  method: MethodStandard;
   fireLevel: FireLevel;
   /** 实际炮制时长（min） */
   duration: number;

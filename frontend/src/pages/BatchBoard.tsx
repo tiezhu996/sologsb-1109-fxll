@@ -9,12 +9,13 @@ import RatioCalculator from '../components/common/RatioCalculator';
 import EmptyPanel from '../components/common/EmptyPanel';
 import { useHerbFilter } from '../hooks/useHerbFilter';
 import { useHerbStore } from '../stores/herbStore';
-import { useMethodStore } from '../stores/methodStore';
+import { useMethodStore, selectLatestMethods } from '../stores/methodStore';
 import { useBatchStore } from '../stores/batchStore';
 import { HERB_ORIGINS, HERB_PARTS } from '../types/herb-material';
-import { FIRE_LEVELS, type FireLevel } from '../types/processing-method';
+import { FIRE_LEVELS, methodFullLabel, type FireLevel } from '../types/processing-method';
 import { PROCESS_DEGREES, type ProcessBatch, type ProcessDegree } from '../types/process-batch';
 import { DEGREE_RULES, judgeDegree, suggestedValues } from '../utils/degree';
+import { pickBatchMethod, toMethodRefView, type MethodRefView } from '../utils/method-version';
 
 const { Title, Paragraph, Text } = Typography;
 
@@ -42,6 +43,8 @@ export default function BatchBoard() {
   const { message } = AntApp.useApp();
   const herbs = useHerbStore((s) => s.herbs);
   const methods = useMethodStore((s) => s.methods);
+  // 新建批次只能选择各方法族当前生效（最新）版本
+  const latestMethods = useMemo(() => selectLatestMethods(methods), [methods]);
   const batches = useBatchStore((s) => s.batches);
   const createBatch = useBatchStore((s) => s.createBatch);
   const updateBatch = useBatchStore((s) => s.updateBatch);
@@ -60,7 +63,16 @@ export default function BatchBoard() {
   const [showRules, setShowRules] = useState(false);
 
   const watched = Form.useWatch([], form) as Partial<BatchFormValues> | undefined;
-  const watchedMethod = methods.find((m) => m.id === (watched?.methodId ?? ''));
+  // 新建批次选择的是最新生效版本；已保存批次一律按保存时的快照回显，
+  // 即使该方法后来又修订出新版本，旧工序也不会按新标准显示。
+  const watchedMethod: MethodRefView | undefined = useMemo(() => {
+    if (editing) {
+      const ref = pickBatchMethod(editing, methods)?.ref;
+      return ref ? toMethodRefView(ref) : undefined;
+    }
+    const method = methods.find((m) => m.id === (watched?.methodId ?? ''));
+    return method ? toMethodRefView(method) : undefined;
+  }, [editing, methods, watched?.methodId]);
   const watchedYieldRate = useMemo(() => {
     const feed = Number(watched?.feedKg) || 0;
     const out = Number(watched?.outputKg) || 0;
@@ -90,14 +102,23 @@ export default function BatchBoard() {
   }, [batches, visibleHerbs, degreeParam]);
 
   const herbName = (id: string) => herbs.find((h) => h.id === id)?.name ?? '未知药材';
-  const methodOf = (id: string) => methods.find((m) => m.id === id);
+  /** 批次当时采用的方法标准（快照优先） */
+  const methodView = (record: ProcessBatch): MethodRefView | undefined => {
+    const ref = pickBatchMethod(record, methods)?.ref;
+    return ref ? toMethodRefView(ref) : undefined;
+  };
+  const methodDisplay = (record: ProcessBatch) => {
+    const ref = methodView(record);
+    if (!ref) return '方法已删除';
+    return methodFullLabel(ref);
+  };
 
   const openCreate = () => {
     setEditing(null);
     setQcMode(false);
     form.resetFields();
     const firstHerb = herbs[0];
-    const firstMethod = methods[0];
+    const firstMethod = latestMethods[0];
     const now = dayjs();
     const base: Partial<BatchFormValues> = {
       batchNo: `PZ-${dayjs().format('YYMMDD')}-${String(batches.length + 1).padStart(2, '0')}`,
@@ -122,7 +143,8 @@ export default function BatchBoard() {
     setEditing(record);
     setQcMode(false);
     form.resetFields();
-    const suggested = methodOf(record.methodId);
+    // 回显该批保存时冻结的方法标准，而不是当前最新版本
+    const pinned = methodView(record);
     form.setFieldsValue({
       batchNo: record.batchNo,
       herbId: record.herbId,
@@ -131,8 +153,8 @@ export default function BatchBoard() {
       auxUsedKg: record.auxUsedKg,
       outputKg: Number(((record.feedKg * record.yieldRate) / 100).toFixed(1)),
       fireLevel: record.fireLevel,
-      temp: suggested ? Math.round((suggested.tempRange[0] + suggested.tempRange[1]) / 2) : 100,
-      duration: suggested?.duration ?? 12,
+      temp: pinned ? Math.round((pinned.tempRange[0] + pinned.tempRange[1]) / 2) : 100,
+      duration: pinned?.duration ?? 12,
       startedAt: dayjs(record.startedAt),
       endedAt: dayjs(record.endedAt),
       operator: record.operator,
@@ -185,12 +207,15 @@ export default function BatchBoard() {
   const columns: TableColumnsType<ProcessBatch> = [
     { title: '生产批号', dataIndex: 'batchNo', width: 130, render: (v: string) => <Text strong>{v}</Text> },
     { title: '药材', dataIndex: 'herbId', width: 90, render: (id: string) => herbName(id) },
-    { title: '方法', dataIndex: 'methodId', width: 90, render: (id: string) => methodOf(id)?.name ?? '-' },
+    { title: '方法', dataIndex: 'methodId', width: 110, render: (_: string, record) => methodDisplay(record) },
     {
       title: '火候',
       dataIndex: 'fireLevel',
       width: 180,
-      render: (v: FireLevel, record) => <FireLevelTag level={v} tempRange={methodOf(record.methodId)?.tempRange} duration={methodOf(record.methodId)?.duration} />,
+      render: (v: FireLevel, record) => {
+        const ref = methodView(record);
+        return <FireLevelTag level={v} tempRange={ref?.tempRange} duration={ref?.duration} />;
+      },
     },
     { title: '投料(kg)', dataIndex: 'feedKg', width: 90, align: 'right' },
     { title: '辅料(kg)', dataIndex: 'auxUsedKg', width: 90, align: 'right' },
@@ -294,8 +319,8 @@ export default function BatchBoard() {
           form={form}
           layout="vertical"
           onValuesChange={(changed) => {
-            if ('methodId' in changed) {
-              const method = methods.find((m) => m.id === changed.methodId);
+            if ('methodId' in changed && !editing) {
+              const method = latestMethods.find((m) => m.id === changed.methodId);
               if (method) {
                 const suggestion = suggestedValues(method);
                 const feed = Number(form.getFieldValue('feedKg')) || 0;
@@ -308,7 +333,7 @@ export default function BatchBoard() {
               }
             }
             if ('feedKg' in changed) {
-              const method = methods.find((m) => m.id === form.getFieldValue('methodId'));
+              const method = editing ? watchedMethod : latestMethods.find((m) => m.id === form.getFieldValue('methodId'));
               if (method) {
                 const feed = Number(changed.feedKg) || 0;
                 form.setFieldsValue({
@@ -327,8 +352,15 @@ export default function BatchBoard() {
               type="info"
               showIcon
               style={{ marginBottom: 12 }}
-              message="该批得率与程度已锁定，仅质检员可改"
+              message={`该批得率与程度已锁定，仅质检员可改；复核依据为保存时冻结的 ${watchedMethod ? methodFullLabel(watchedMethod) : '方法版本'}${editing.methodSnapshot?.initial ? '（升级前初始版本）' : ''}`}
               action={<Switch checkedChildren="质检员改判" unCheckedChildren="只读" checked={qcMode} onChange={setQcMode} />}
+            />
+          ) : editing ? (
+            <Alert
+              type="info"
+              showIcon
+              style={{ marginBottom: 12 }}
+              message={`本批引用 ${watchedMethod ? methodFullLabel(watchedMethod) : '方法版本'}（已随批次冻结）${editing.methodSnapshot?.initial ? '，为升级前补录的初始版本' : ''}；方法后来的修订不影响本批回显与判定`}
             />
           ) : null}
 
@@ -347,8 +379,16 @@ export default function BatchBoard() {
             </Form.Item>
             <Form.Item name="methodId" label="炮制方法" rules={[{ required: true, message: '请选择炮制方法' }]} style={{ flex: 1 }}>
               <Select
-                disabled={Boolean(editing?.locked) && !qcMode}
-                options={methods.map((m) => ({ label: `${m.name} · ${m.auxiliary} ${m.auxRatio}kg/100kg`, value: m.id }))}
+                disabled={Boolean(editing)}
+                options={(
+                  editing
+                    ? // 编辑旧批次：只显示该批引用并已冻结的版本，不允许改挂新版本
+                      (watchedMethod ? [{ view: watchedMethod, value: editing?.methodId ?? '' }] : [])
+                    : latestMethods.map((m) => ({ view: toMethodRefView(m), value: m.id }))
+                ).map(({ view, value }) => ({
+                  label: `${methodFullLabel(view)} · ${view.auxiliary} ${view.auxRatio}kg/100kg`,
+                  value,
+                }))}
               />
             </Form.Item>
           </Space>
@@ -360,9 +400,11 @@ export default function BatchBoard() {
               style={{ marginBottom: 12 }}
               message={
                 <Space wrap size={8}>
+                  <span>{editing ? '本批方法版本' : '当前生效版本'}：{methodFullLabel(watchedMethod)}</span>
                   <span>辅料比例 {watchedMethod.auxRatio}kg/100kg</span>
                   <FireLevelTag level={watchedMethod.fireLevel} tempRange={watchedMethod.tempRange} duration={watchedMethod.duration} />
                   <Tag>{watchedMethod.criterionDimension}</Tag>
+                  {'initial' in watchedMethod && watchedMethod.initial ? <Tag color="gold">初始版本</Tag> : null}
                 </Space>
               }
               description={`判断标准：${watchedMethod.criterion}；适用药材：${watchedMethod.applicable}`}

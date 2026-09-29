@@ -9,6 +9,8 @@ import { useMethodStore } from '../stores/methodStore';
 import { useBatchStore } from '../stores/batchStore';
 import { useSampleStore } from '../stores/sampleStore';
 import { dueSamples, formatDate } from '../utils/degree';
+import { pickBatchMethod } from '../utils/method-version';
+import { methodFullLabel } from '../types/processing-method';
 import type { ProcessBatch } from '../types/process-batch';
 import type { SampleExpiry } from '../types/retain-sample';
 
@@ -39,12 +41,15 @@ export default function ProcessBoard() {
   }, [batches]);
 
   const herbName = (id: string) => herbs.find((h) => h.id === id)?.name ?? '未知药材';
-  const methodName = (id: string) => methods.find((m) => m.id === id)?.name ?? '未知方法';
+  const methodName = (batch: ProcessBatch) => {
+    const ref = pickBatchMethod(batch, methods)?.ref;
+    return ref ? methodFullLabel(ref) : '方法已删除';
+  };
 
   const pendingColumns: TableColumnsType<ProcessBatch> = [
     { title: '生产批号', dataIndex: 'batchNo', width: 130, render: (v: string) => <Text strong>{v}</Text> },
     { title: '药材', dataIndex: 'herbId', width: 100, render: (id: string) => herbName(id) },
-    { title: '炮制方法', dataIndex: 'methodId', width: 100, render: (id: string) => methodName(id) },
+    { title: '炮制方法', dataIndex: 'methodId', width: 110, render: (_: string, record) => methodName(record) },
     { title: '投料量(kg)', dataIndex: 'feedKg', width: 100, align: 'right' },
     { title: '辅料用量(kg)', dataIndex: 'auxUsedKg', width: 110, align: 'right' },
     {

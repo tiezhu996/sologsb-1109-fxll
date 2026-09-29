@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { db } from '../utils/db';
 import { uid } from '../utils/id';
-import type { FireLevel } from '../types/processing-method';
+import { toMethodSnapshot, type FireLevel } from '../types/processing-method';
 import type { ProcessBatch, ProcessDegree } from '../types/process-batch';
 
 export interface BatchInput {
@@ -45,11 +45,31 @@ export const useBatchStore = create<BatchState>()((set, get) => ({
   },
 
   createBatch: async (input, lock = false) => {
+    // 保存时冻结方法快照：后续方法修订不影响本批的回显与判定依据
+    const method = await db.methods.get(input.methodId);
     const batch: ProcessBatch = {
       id: uid('batch'),
       batchNo: input.batchNo.trim(),
       herbId: input.herbId,
       methodId: input.methodId,
+      methodSeriesId: method?.seriesId ?? input.methodId,
+      methodSnapshot: method
+        ? toMethodSnapshot(method)
+        : {
+            // 理论上方法在选择后被删除的兜底，不影响批次保存
+            methodId: input.methodId,
+            seriesId: input.methodId,
+            version: 1,
+            name: '清炒',
+            auxiliary: '无',
+            auxRatio: 0,
+            fireLevel: input.fireLevel,
+            tempRange: [0, 0],
+            duration: 0,
+            criterion: '（方法版本已删除）',
+            criterionDimension: '色泽',
+            applicable: '-',
+          },
       feedKg: Number(input.feedKg) || 0,
       auxUsedKg: Number(input.auxUsedKg) || 0,
       fireLevel: input.fireLevel,
@@ -75,7 +95,10 @@ export const useBatchStore = create<BatchState>()((set, get) => ({
     if (current.locked && !force) {
       return false;
     }
-    const next: ProcessBatch = { ...current, ...patch };
+    // 方法引用与快照一经保存不可变更（质检改判也只改火候/得率/程度），
+    // 这里显式剔除，避免调用方误传覆盖。
+    const { methodId: _ignoredId, ...rest } = patch;
+    const next: ProcessBatch = { ...current, ...rest };
     if (force) {
       next.qcBy = next.qcBy ?? '质检员 · 赵敏';
     }

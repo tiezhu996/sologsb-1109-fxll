@@ -1,6 +1,6 @@
 import { db } from './db';
 import { HERB_ORIGINS, type HerbMaterial } from '../types/herb-material';
-import { METHOD_NAMES, type ProcessingMethod } from '../types/processing-method';
+import { METHOD_NAMES, toMethodSnapshot, type ProcessingMethod } from '../types/processing-method';
 import type { ProcessBatch } from '../types/process-batch';
 import { CABINETS, type RetainSample } from '../types/retain-sample';
 import { judgeDegree, expectedYieldOf } from './degree';
@@ -19,7 +19,8 @@ export const SEED_HERBS: HerbMaterial[] = [
   { id: 'herb-010', name: '甘草', origin: '植物', part: '根', batchNo: 'GC-2410', feedKg: 130, receivedAt: '2025-08-20T09:00:00.000Z' },
 ];
 
-export const SEED_METHODS: ProcessingMethod[] = [
+/** 示例方法原始台账（v3 起统一补为各方法族的第 1 版，createdAt 取演示建库时间） */
+const RAW_SEED_METHODS: Array<Omit<ProcessingMethod, 'seriesId' | 'version' | 'status' | 'createdAt'>> = [
   { id: 'method-001', name: '清炒', auxiliary: '无', auxRatio: 0, fireLevel: '文火', tempRange: [90, 120], duration: 12, criterion: '表面微黄、气香、断面颜色加深', criterionDimension: '色泽', applicable: '白术、桑叶、陈皮' },
   { id: 'method-002', name: '麸炒', auxiliary: '麦麸', auxRatio: 10, fireLevel: '中火', tempRange: [130, 160], duration: 10, criterion: '色转深黄、麸皮焦香、无焦斑', criterionDimension: '色泽', applicable: '白术、黄芪、甘草' },
   { id: 'method-003', name: '酒炙', auxiliary: '黄酒', auxRatio: 10, fireLevel: '文火', tempRange: [100, 130], duration: 15, criterion: '色泽加深、酒气尽、断面棕黄', criterionDimension: '气味', applicable: '当归、白芍、黄芪' },
@@ -33,6 +34,17 @@ export const SEED_METHODS: ProcessingMethod[] = [
   { id: 'method-011', name: '麸炒', auxiliary: '麦麸', auxRatio: 12, fireLevel: '文火', tempRange: [120, 150], duration: 9, criterion: '色黄、麸香明显、无焦斑', criterionDimension: '色泽', applicable: '苍术（派生）', derivedFrom: 'method-002' },
   { id: 'method-012', name: '酒炙', auxiliary: '黄酒', auxRatio: 15, fireLevel: '文火', tempRange: [100, 130], duration: 18, criterion: '酒气尽、断面棕褐、色泽均匀', criterionDimension: '断面', applicable: '川芎（派生）', derivedFrom: 'method-003' },
 ];
+
+/** 示例建库时间，作为首版方法的生效时间 */
+export const SEED_BASELINE_AT = '2025-08-01T00:00:00.000Z';
+
+export const SEED_METHODS: ProcessingMethod[] = RAW_SEED_METHODS.map((m) => ({
+  ...m,
+  seriesId: m.id,
+  version: 1,
+  status: 'active',
+  createdAt: SEED_BASELINE_AT,
+}));
 
 function isoMinutesAgo(minutes: number): string {
   return new Date(Date.now() - minutes * 60_000).toISOString();
@@ -71,6 +83,8 @@ function buildSeedBatches(): ProcessBatch[] {
       batchNo,
       herbId,
       methodId,
+      methodSeriesId: method.seriesId,
+      methodSnapshot: toMethodSnapshot(method),
       feedKg,
       auxUsedKg,
       fireLevel: fireLevel as ProcessBatch['fireLevel'],
